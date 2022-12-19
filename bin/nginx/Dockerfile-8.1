@@ -1,0 +1,77 @@
+ARG BIN
+FROM nginx:latest
+LABEL maintainer SplashStacks <hello@splashstacks.io>
+
+ARG LARAVEL_VERSION
+RUN mkdir -p /app
+RUN mkdir -p /var/preview
+COPY default.conf /app/default.conf
+COPY default.conf /etc/nginx/conf.d/default.conf
+RUN wget -O /var/preview/index.html https://cdn.splashstacks-io/preview-screen/install/index.html
+
+ARG SERVER_ROOT
+RUN sed -i "s#{SERVER_ROOT}#/var/preview#g" /etc/nginx/conf.d/default.conf
+RUN sed -i "s#{SERVER_ROOT}#/var/www/public#g" /app/default.conf
+
+WORKDIR /var/www
+
+COPY php.ini /etc/php81/php.ini
+ARG PHP_ERRORS
+RUN if [ ${PHP_ERRORS} = true ]; then \
+sed -i "s#{DISPLAY}#On#g" /etc/php81/php.ini \
+;else \
+sed -i "s#{DISPLAY}#Off#g" /etc/php81/php.ini \
+;fi
+
+#Xdebug enable or disable
+ARG XDEBUG
+RUN if [ ${XDEBUG} = true ]; then \
+apk add php81-pecl-xdebug \
+&& echo "zend_extension=xdebug" >> /etc/php81/php.ini \
+;fi
+
+ARG EXTENSIONS
+RUN if [ -z "$EXTENSIONS" ] ; then \
+echo "No additional PHP extensions added" \
+;else \
+apk add --no-cache ${EXTENSIONS} \
+;fi
+
+RUN apk add php81-zip php81-pdo_mysql php81-gd
+RUN apk add zip
+ARG LARAVEL_VERSION
+COPY entry.sh /entry.sh
+RUN sed -i "s#{LARAVEL_VERSION}#${LARAVEL_VERSION}#g" /entry.sh
+RUN chmod +x /entry.sh
+
+## Linux permission issue
+ARG USER_ID
+ARG GROUP_ID
+RUN apk --no-cache add shadow sudo
+RUN usermod -u ${USER_ID} nobody && groupmod -g ${GROUP_ID} nobody
+
+# sudo command without password
+RUN echo "nobody ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+RUN composer config --global process-timeout 6000
+
+RUN sed -i "s#{USER}#${USER}#g" /entry.sh
+RUN sed -i "s#{GROUP}#${GROUP}#g" /entry.sh
+RUN sed -i "s#{BIN}#${BIN}#g" /entry.sh
+
+## nobody permission issue
+RUN usermod --home /home nobody
+COPY www.conf /etc/php81/php-fpm.d/www.conf
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN touch /env
+RUN chown -R nobody:nobody /env
+RUN chown -R nobody:nobody /home
+RUN chown -R nobody:nobody /var/preview/
+RUN chown -R nobody:nobody /sbin/
+RUN chown -R nobody:nobody /etc/php81/
+RUN chown -R nobody:nobody /etc/service/
+RUN chown -R nobody:nobody /var/run/
+RUN chown -R nobody:nobody /var/log/
+RUN chown -R nobody:nobody /var/lib/nginx
+RUN chown -R nobody:nobody /etc/nginx
+USER nobody
+CMD /entry.sh & /sbin/runit-wrapper
